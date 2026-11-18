@@ -44,6 +44,10 @@ function unauthorized(res) {
   return res.status(401).json({ error: "Unauthorized" });
 }
 
+function cleanText(value, maxLength) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
 async function getUserFromRequest(req) {
   const header = req.headers.authorization || "";
   if (!header.startsWith("Bearer ")) return null;
@@ -67,7 +71,9 @@ async function getUserFromRequest(req) {
     id: userId,
     name: user.name || "",
     email: user.email || "",
+    phone: user.phone || "",
     role: String(user.role || "").toLowerCase(),
+    plan: String(user.plan || "free").toLowerCase(),
   };
 }
 
@@ -106,6 +112,32 @@ function serializeTuition(tuition) {
 const activeTuitionFilter = {
   $or: [{ status: "Active" }, { status: { $exists: false } }, { status: null }],
 };
+
+function normalizeApplicationStatus(value) {
+  const status = String(value || "pending").toLowerCase();
+  return ["accepted", "rejected"].includes(status) ? status : "pending";
+}
+
+function serializeApplicant(application, tuitionTitles) {
+  const tuitionId = String(application.tuitionId || "");
+  const fallbackDate = application._id?.getTimestamp
+    ? application._id.getTimestamp()
+    : new Date();
+
+  return {
+    id: application._id.toString(),
+    studentName: application.studentName || "",
+    studentEmail: application.studentEmail || "",
+    phone: application.phone || "",
+    tuitionId,
+    tuitionTitle:
+      tuitionTitles.get(tuitionId) || "Tuition no longer available",
+    preferredSchedule: application.preferredSchedule || "",
+    note: application.note || "",
+    applicationDate: application.createdAt || fallbackDate,
+    status: normalizeApplicationStatus(application.status),
+  };
+}
 
 const editableFields = [
   "title",
@@ -349,20 +381,174 @@ app.post("/tuitions/:id/apply", async (req, res) => {
     }
 
     const now = new Date();
+    const phone =
+      cleanText(req.body?.phone, 40) || cleanText(student.phone, 40);
+    const preferredSchedule = cleanText(req.body?.preferredSchedule, 120);
+    const note = cleanText(req.body?.note, 1000);
+
     const result = await applicationsCollection.insertOne({
       tuitionId: tuitionId.toString(),
       studentId: student.id,
       studentName: student.name,
       studentEmail: student.email,
+      phone,
+      preferredSchedule,
+      note,
       tutorId: String(tuition.tutorId || ""),
-      status: "Pending",
+      status: "pending",
       createdAt: now,
       updatedAt: now,
     });
 
-    res
-      .status(201)
-      .json({ id: result.insertedId.toString(), status: "Pending" });
+    res.status(201).json({ id: result.insertedId.toString(), status: "pending" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.get("/tutor-applicants", async (req, res) => {
+  try {
+    const tutor = await getTutorFromRequest(req);
+    if (!tutor) return unauthorized(res);
+
+    const tutorTuitions = await tuitionsCollection
+      .find({ tutorId: tutor.id }, { projection: { _id: 1, title: 1 } })
+      .toArray();
+
+    const tuitionTitles = new Map(
+      tutorTuitions.map((tuition) => [
+        tuition._id.toString(),
+        tuition.title || "",
+      ])
+    );
+    const tuitionIds = [...tuitionTitles.keys()];
+
+    const applications = tuitionIds.length
+      ? await applicationsCollection
+          .find({ tuitionId: { $in: tuitionIds } })
+          .sort({ createdAt: -1 })
+          .toArray()
+      : [];
+
+    const applicants = applications.map((application) =>
+      serializeApplicant(application, tuitionTitles)
+    );
+
+    res.json({
+      applicants,
+      stats: {
+        total: applicants.length,
+        pending: applicants.filter(
+          (applicant) => applicant.status === "pending"
+        ).length,
+        accepted: applicants.filter(
+          (applicant) => applicant.status === "accepted"
+        ).length,
+        rejected: applicants.filter(
+          (applicant) => applicant.status === "rejected"
+        ).length,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.patch("/applications/:id/status", async (req, res) => {
+  try {
+    const tutor = await getTutorFromRequest(req);
+    if (!tutor) return unauthorized(res);
+
+    const status = String(req.body?.status || "").toLowerCase();
+    if (!["accepted", "rejected"].includes(status)) {
+      return res.status(400).json({ error: "Invalid application status." });
+    }
+
+    const application = await applicationsCollection.findOne({
+      _id: toObjectId(req.params.id),
+    });
+
+    if (!application) {
+      return res.status(404).json({ error: "Application not found" });
+    }
+
+    if (normalizeApplicationStatus(application.status) !== "pending") {
+      return res
+        .status(409)
+        .json({ error: "Only pending applications can be reviewed." });
+    }
+
+    const tuition = await tuitionsCollection.findOne({
+      _id: toObjectId(application.tuitionId),
+      tutorId: tutor.id,
+    });
+
+    if (!tuition || String(application.tutorId || "") !== tutor.id) {
+      return res.status(404).json({ error: "Application not found" });
+    }
+
+    const result = await applicationsCollection.updateOne(
+      {
+        _id: application._id,
+        tutorId: tutor.id,
+        tuitionId: application.tuitionId,
+        status: { $in: ["Pending", "pending"] },
+      },
+      {
+        $set: {
+          status,
+          updatedAt: new Date(),
+          reviewedBy: tutor.id,
+        },
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res
+        .status(409)
+        .json({ error: "Only pending applications can be reviewed." });
+    }
+
+    res.json({ id: application._id.toString(), status });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.get("/tutor-stats", async (req, res) => {
+  try {
+    const tutor = await getTutorFromRequest(req);
+    if (!tutor) return unauthorized(res);
+
+    const [totalTuitions, activeApprovedTuitions, tutorTuitions] =
+      await Promise.all([
+        tuitionsCollection.countDocuments({ tutorId: tutor.id }),
+        tuitionsCollection.countDocuments({
+          tutorId: tutor.id,
+          status: "Active",
+          approvalStatus: "Approved",
+        }),
+        tuitionsCollection
+          .find({ tutorId: tutor.id }, { projection: { _id: 1 } })
+          .toArray(),
+      ]);
+
+    const tuitionIds = tutorTuitions.map((tuition) => tuition._id.toString());
+    const totalApplicants = tuitionIds.length
+      ? await applicationsCollection.countDocuments({
+          tuitionId: { $in: tuitionIds },
+        })
+      : 0;
+
+    res.json({
+      totalTuitions,
+      activeApprovedTuitions,
+      totalApplicants,
+      plan: tutor.plan || "free",
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Server error" });
