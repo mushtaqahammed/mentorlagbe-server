@@ -243,6 +243,40 @@ app.delete("/tuitions/:id", async (req, res) => {
   }
 });
 
+app.get("/all-tuitions", async (req, res) => {
+  try {
+    const tuitions = await tuitionsCollection
+      .find({})
+      .sort({ createdAt: -1, _id: -1 })
+      .toArray();
+
+    const tutorIds = [
+      ...new Set(
+        tuitions
+          .map((tuition) => String(tuition.tutorId || ""))
+          .filter(Boolean)
+      ),
+    ];
+    const tutors = await usersCollection
+      .find({ _id: { $in: tutorIds.map(toObjectId) } })
+      .toArray();
+    const tutorNames = new Map(
+      tutors.map((tutor) => [tutor._id.toString(), tutor.name || "Tutor"])
+    );
+
+    res.json(
+      tuitions.map((tuition) => ({
+        ...serializeTuition(tuition),
+        tutorName:
+          tutorNames.get(String(tuition.tutorId || "")) || "Tutor",
+      }))
+    );
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
