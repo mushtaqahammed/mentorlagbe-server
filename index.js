@@ -118,6 +118,21 @@ function normalizeApplicationStatus(value) {
   return ["accepted", "rejected"].includes(status) ? status : "pending";
 }
 
+function countApplicationStatuses(applications) {
+  return {
+    total: applications.length,
+    pending: applications.filter(
+      (application) => normalizeApplicationStatus(application.status) === "pending"
+    ).length,
+    accepted: applications.filter(
+      (application) => normalizeApplicationStatus(application.status) === "accepted"
+    ).length,
+    rejected: applications.filter(
+      (application) => normalizeApplicationStatus(application.status) === "rejected"
+    ).length,
+  };
+}
+
 function serializeApplicant(application, tuitionTitles) {
   const tuitionId = String(application.tuitionId || "");
   const fallbackDate = application._id?.getTimestamp
@@ -134,6 +149,23 @@ function serializeApplicant(application, tuitionTitles) {
       tuitionTitles.get(tuitionId) || "Tuition no longer available",
     preferredSchedule: application.preferredSchedule || "",
     note: application.note || "",
+    applicationDate: application.createdAt || fallbackDate,
+    status: normalizeApplicationStatus(application.status),
+  };
+}
+
+function serializeStudentApplication(application, tuition, tutor) {
+  const fallbackDate = application._id?.getTimestamp
+    ? application._id.getTimestamp()
+    : new Date();
+
+  return {
+    id: application._id.toString(),
+    tuitionId: String(application.tuitionId || ""),
+    tuitionTitle: tuition?.title || "Tuition no longer available",
+    tutorName: tuition?.tutorName || tutor?.name || "Tutor",
+    tutorEmail: tuition?.tutorEmail || tutor?.email || "",
+    monthlyFee: Number(tuition?.monthlyFee || 0),
     applicationDate: application.createdAt || fallbackDate,
     status: normalizeApplicationStatus(application.status),
   };
@@ -549,6 +581,161 @@ app.get("/tutor-stats", async (req, res) => {
       totalApplicants,
       plan: tutor.plan || "free",
     });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.get("/student-stats", async (req, res) => {
+  try {
+    const student = await getUserFromRequest(req);
+    if (!student) return unauthorized(res);
+
+    if (student.role !== "student") {
+      return res
+        .status(403)
+        .json({ error: "Only students can view student statistics." });
+    }
+
+    const applications = await applicationsCollection
+      .find({ studentId: student.id }, { projection: { status: 1 } })
+      .toArray();
+
+    const counts = countApplicationStatuses(applications);
+
+    res.json({
+      totalApplied: counts.total,
+      accepted: counts.accepted,
+      pending: counts.pending,
+      plan: student.plan || "free",
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.get("/student-applications", async (req, res) => {
+  try {
+    const student = await getUserFromRequest(req);
+    if (!student) return unauthorized(res);
+
+    if (student.role !== "student") {
+      return res
+        .status(403)
+        .json({ error: "Only students can view student applications." });
+    }
+
+    const applications = await applicationsCollection
+      .find({ studentId: student.id })
+      .sort({ createdAt: -1, _id: -1 })
+      .toArray();
+
+    const tuitionIds = [
+      ...new Set(
+        applications
+          .map((application) => String(application.tuitionId || ""))
+          .filter(Boolean)
+      ),
+    ];
+    const tutorIds = [
+      ...new Set(
+        applications
+          .map((application) => String(application.tutorId || ""))
+          .filter(Boolean)
+      ),
+    ];
+
+    const [tuitions, tutors] = await Promise.all([
+      tuitionIds.length
+        ? tuitionsCollection
+            .find(
+              { _id: { $in: tuitionIds.map(toObjectId) } },
+              {
+                projection: {
+                  title: 1,
+                  monthlyFee: 1,
+                  tutorId: 1,
+                  tutorName: 1,
+                  tutorEmail: 1,
+                },
+              }
+            )
+            .toArray()
+        : [],
+      tutorIds.length
+        ? usersCollection
+            .find(
+              { _id: { $in: tutorIds.map(toObjectId) } },
+              { projection: { name: 1, email: 1 } }
+            )
+            .toArray()
+        : [],
+    ]);
+
+    const tuitionMap = new Map(
+      tuitions.map((tuition) => [tuition._id.toString(), tuition])
+    );
+    const tutorMap = new Map(
+      tutors.map((tutor) => [tutor._id.toString(), tutor])
+    );
+
+    res.json({
+      applications: applications.map((application) => {
+        const tuition = tuitionMap.get(String(application.tuitionId || ""));
+        const tutor =
+          tutorMap.get(String(tuition?.tutorId || "")) ||
+          tutorMap.get(String(application.tutorId || ""));
+
+        return serializeStudentApplication(application, tuition, tutor);
+      }),
+      stats: countApplicationStatuses(applications),
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.delete("/applications/:id", async (req, res) => {
+  try {
+    const student = await getUserFromRequest(req);
+    if (!student) return unauthorized(res);
+
+    if (student.role !== "student") {
+      return res
+        .status(403)
+        .json({ error: "Only students can cancel their applications." });
+    }
+
+    const application = await applicationsCollection.findOne({
+      _id: toObjectId(req.params.id),
+    });
+
+    if (!application || String(application.studentId || "") !== student.id) {
+      return res.status(404).json({ error: "Application not found" });
+    }
+
+    if (normalizeApplicationStatus(application.status) !== "pending") {
+      return res
+        .status(409)
+        .json({ error: "Only pending applications can be cancelled." });
+    }
+
+    const result = await applicationsCollection.deleteOne({
+      _id: application._id,
+      studentId: student.id,
+      status: { $in: ["Pending", "pending"] },
+    });
+
+    if (result.deletedCount === 0) {
+      return res
+        .status(409)
+        .json({ error: "Only pending applications can be cancelled." });
+    }
+
+    res.json({ success: true });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Server error" });
