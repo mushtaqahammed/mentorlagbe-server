@@ -27,6 +27,7 @@ const database = connectedClient.db("mentor_lagbe");
 const usersCollection = database.collection("user");
 const sessionsCollection = database.collection("session");
 const tuitionsCollection = database.collection("tuition");
+const applicationsCollection = database.collection("application");
 
 app.use(cors());
 app.use(express.json());
@@ -43,7 +44,7 @@ function unauthorized(res) {
   return res.status(401).json({ error: "Unauthorized" });
 }
 
-async function getTutorFromRequest(req) {
+async function getUserFromRequest(req) {
   const header = req.headers.authorization || "";
   if (!header.startsWith("Bearer ")) return null;
 
@@ -60,13 +61,20 @@ async function getTutorFromRequest(req) {
   if (!userId) return null;
 
   const user = await usersCollection.findOne({ _id: toObjectId(userId) });
-  if (!user || String(user.role).toLowerCase() !== "tutor") return null;
+  if (!user) return null;
 
   return {
     id: userId,
     name: user.name || "",
     email: user.email || "",
+    role: String(user.role || "").toLowerCase(),
   };
+}
+
+async function getTutorFromRequest(req) {
+  const user = await getUserFromRequest(req);
+  if (!user || user.role !== "tutor") return null;
+  return user;
 }
 
 function serializeTuition(tuition) {
@@ -92,6 +100,12 @@ function serializeTuition(tuition) {
     updatedAt: tuition.updatedAt || null,
   };
 }
+
+// Public pages only show active posts. Older posts without a status are
+// treated as active, matching the fallback used in serializeTuition().
+const activeTuitionFilter = {
+  $or: [{ status: "Active" }, { status: { $exists: false } }, { status: null }],
+};
 
 const editableFields = [
   "title",
@@ -246,7 +260,7 @@ app.delete("/tuitions/:id", async (req, res) => {
 app.get("/all-tuitions", async (req, res) => {
   try {
     const tuitions = await tuitionsCollection
-      .find({})
+      .find(activeTuitionFilter)
       .sort({ createdAt: -1, _id: -1 })
       .toArray();
 
@@ -271,6 +285,84 @@ app.get("/all-tuitions", async (req, res) => {
           tutorNames.get(String(tuition.tutorId || "")) || "Tutor",
       }))
     );
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.get("/all-tuitions/:id", async (req, res) => {
+  try {
+    const tuition = await tuitionsCollection.findOne({
+      _id: toObjectId(req.params.id),
+      ...activeTuitionFilter,
+    });
+
+    if (!tuition) {
+      return res.status(404).json({ error: "Tuition not found" });
+    }
+
+    const tutor = await usersCollection.findOne({
+      _id: toObjectId(String(tuition.tutorId || "")),
+    });
+
+    res.json({
+      ...serializeTuition(tuition),
+      tutorName: tutor?.name || "Tutor",
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.post("/tuitions/:id/apply", async (req, res) => {
+  try {
+    const student = await getUserFromRequest(req);
+    if (!student) return unauthorized(res);
+
+    if (student.role !== "student") {
+      return res
+        .status(403)
+        .json({ error: "Only students can apply for tuitions." });
+    }
+
+    const tuitionId = toObjectId(req.params.id);
+    const tuition = await tuitionsCollection.findOne({
+      _id: tuitionId,
+      ...activeTuitionFilter,
+    });
+
+    if (!tuition) {
+      return res.status(404).json({ error: "Tuition not found" });
+    }
+
+    const existing = await applicationsCollection.findOne({
+      tuitionId: tuitionId.toString(),
+      studentId: student.id,
+    });
+
+    if (existing) {
+      return res
+        .status(409)
+        .json({ error: "You have already applied for this tuition." });
+    }
+
+    const now = new Date();
+    const result = await applicationsCollection.insertOne({
+      tuitionId: tuitionId.toString(),
+      studentId: student.id,
+      studentName: student.name,
+      studentEmail: student.email,
+      tutorId: String(tuition.tutorId || ""),
+      status: "Pending",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    res
+      .status(201)
+      .json({ id: result.insertedId.toString(), status: "Pending" });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Server error" });
