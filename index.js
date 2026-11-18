@@ -3,6 +3,7 @@ import { MongoClient } from "mongodb";
 import cors from "cors";
 import dotenv from "dotenv";
 
+
 dotenv.config();
 
 const app = express();
@@ -26,8 +27,7 @@ const connectedClient = await connectToMongoDB();
 const database= connectedClient.db("mentor_lagbe");
 const usersCollection = database.collection("user");
 
-
-
+const tuitionsCollection = database.collection("tuition");
 
 //middleware
 
@@ -42,6 +42,14 @@ app.get("/users", async (req, res) => {
   const cursor = usersCollection.find({});
   const users = await cursor.toArray();
   res.send(users);
+});
+
+
+//job related api
+app.post("/tuitions", async (req, res) => {
+  const tuition = req.body;
+  const result = await tuitionsCollection.insertOne(tuition);
+  res.send(result);
 });
 
 
