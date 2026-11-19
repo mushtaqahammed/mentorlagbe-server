@@ -107,9 +107,13 @@ function serializeTuition(tuition) {
   };
 }
 
-// Public pages only show active posts. Older posts without a status are
-// treated as active, matching the fallback used in serializeTuition().
+// Public pages only show active AND approved posts. Older posts without a
+// status are treated as active, matching the fallback used in
+// serializeTuition(). A missing approvalStatus is treated as pending, so it
+// never becomes publicly visible. The comparison is case-insensitive because
+// older records may use lowercase values.
 const activeTuitionFilter = {
+  approvalStatus: /^approved$/i,
   $or: [{ status: "Active" }, { status: { $exists: false } }, { status: null }],
 };
 
