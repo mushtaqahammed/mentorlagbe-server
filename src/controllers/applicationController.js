@@ -269,7 +269,45 @@ export async function listStudentApplications(req, res) {
       .sort({ createdAt: -1 })
       .toArray();
 
-    res.status(200).json(applications);
+    // Return the same shaped response the dashboard expects. The raw Mongo
+    // documents lack the tuition/tutor details the UI renders.
+    const tuitionIds = [
+      ...new Set(applications.map((item) => String(item.tuitionId || ""))),
+    ].filter(Boolean);
+    const tutorIds = [
+      ...new Set(applications.map((item) => String(item.tutorId || ""))),
+    ].filter(Boolean);
+
+    const [tuitions, tutors] = await Promise.all([
+      tuitionIds.length
+        ? tuitionsCollection
+            .find({ _id: { $in: tuitionIds.map(toObjectId) } })
+            .toArray()
+        : [],
+      tutorIds.length
+        ? usersCollection
+            .find({ _id: { $in: tutorIds.map(toObjectId) } })
+            .toArray()
+        : [],
+    ]);
+
+    const tuitionById = new Map(
+      tuitions.map((tuition) => [String(tuition._id), tuition]),
+    );
+    const tutorById = new Map(tutors.map((tutor) => [String(tutor._id), tutor]));
+
+    const serialized = applications.map((application) =>
+      serializeStudentApplication(
+        application,
+        tuitionById.get(String(application.tuitionId || "")),
+        tutorById.get(String(application.tutorId || "")),
+      ),
+    );
+
+    res.status(200).json({
+      applications: serialized,
+      stats: countApplicationStatuses(applications),
+    });
   } catch (error) {
     console.error("Failed to fetch applications:", error);
     res.status(500).json({ error: "Server error" });
