@@ -3,11 +3,7 @@ import {
   tuitionsCollection,
   usersCollection,
 } from "../config/database.js";
-import {
-  getTutorFromRequest,
-  getUserFromRequest,
-  unauthorized,
-} from "../middleware/auth.js";
+import { ObjectId } from "mongodb";
 import {
   countApplicationStatuses,
   normalizeApplicationStatus,
@@ -19,8 +15,7 @@ import { activeTuitionFilter } from "../utils/tuition.js";
 
 export async function applyToTuition(req, res) {
   try {
-    const student = await getUserFromRequest(req);
-    if (!student) return unauthorized(res);
+    const student = req.user;
 
     if (student.role !== "student") {
       return res
@@ -78,8 +73,7 @@ export async function applyToTuition(req, res) {
 
 export async function listTutorApplicants(req, res) {
   try {
-    const tutor = await getTutorFromRequest(req);
-    if (!tutor) return unauthorized(res);
+    const tutor = req.user;
 
     const tutorTuitions = await tuitionsCollection
       .find({ tutorId: tutor.id }, { projection: { _id: 1, title: 1 } })
@@ -127,8 +121,7 @@ export async function listTutorApplicants(req, res) {
 
 export async function updateApplicationStatus(req, res) {
   try {
-    const tutor = await getTutorFromRequest(req);
-    if (!tutor) return unauthorized(res);
+    const tutor = req.user;
 
     const status = String(req.body?.status || "").toLowerCase();
     if (!["accepted", "rejected"].includes(status)) {
@@ -189,8 +182,7 @@ export async function updateApplicationStatus(req, res) {
 
 export async function getTutorStats(req, res) {
   try {
-    const tutor = await getTutorFromRequest(req);
-    if (!tutor) return unauthorized(res);
+    const tutor = req.user;
 
     const [totalTuitions, activeApprovedTuitions, tutorTuitions] =
       await Promise.all([
@@ -226,8 +218,7 @@ export async function getTutorStats(req, res) {
 
 export async function getStudentStats(req, res) {
   try {
-    const student = await getUserFromRequest(req);
-    if (!student) return unauthorized(res);
+    const student = req.user;
 
     if (student.role !== "student") {
       return res
@@ -253,92 +244,41 @@ export async function getStudentStats(req, res) {
   }
 }
 
+
+// ------------
+
+
 export async function listStudentApplications(req, res) {
   try {
-    const student = await getUserFromRequest(req);
-    if (!student) return unauthorized(res);
+    const student = req.user;
 
-    if (student.role !== "student") {
-      return res
-        .status(403)
-        .json({ error: "Only students can view student applications." });
+    // Always scope to the authenticated student. `applicantId` from the query
+    // is ignored so one student can never read another student's data.
+    const query = { studentId: student.id };
+
+    if (req.query.tuitionId) {
+      const tuitionId = String(req.query.tuitionId).trim();
+      if (!ObjectId.isValid(tuitionId)) {
+        return res.status(400).json({ error: "Invalid tuitionId parameter" });
+      }
+      query.tuitionId = tuitionId;
     }
 
     const applications = await applicationsCollection
-      .find({ studentId: student.id })
-      .sort({ createdAt: -1, _id: -1 })
+      .find(query)
+      .sort({ createdAt: -1 })
       .toArray();
 
-    const tuitionIds = [
-      ...new Set(
-        applications
-          .map((application) => String(application.tuitionId || ""))
-          .filter(Boolean),
-      ),
-    ];
-    const tutorIds = [
-      ...new Set(
-        applications
-          .map((application) => String(application.tutorId || ""))
-          .filter(Boolean),
-      ),
-    ];
-
-    const [tuitions, tutors] = await Promise.all([
-      tuitionIds.length
-        ? tuitionsCollection
-            .find(
-              { _id: { $in: tuitionIds.map(toObjectId) } },
-              {
-                projection: {
-                  title: 1,
-                  monthlyFee: 1,
-                  tutorId: 1,
-                  tutorName: 1,
-                  tutorEmail: 1,
-                },
-              },
-            )
-            .toArray()
-        : [],
-      tutorIds.length
-        ? usersCollection
-            .find(
-              { _id: { $in: tutorIds.map(toObjectId) } },
-              { projection: { name: 1, email: 1 } },
-            )
-            .toArray()
-        : [],
-    ]);
-
-    const tuitionMap = new Map(
-      tuitions.map((tuition) => [tuition._id.toString(), tuition]),
-    );
-    const tutorMap = new Map(
-      tutors.map((tutor) => [tutor._id.toString(), tutor]),
-    );
-
-    res.json({
-      applications: applications.map((application) => {
-        const tuition = tuitionMap.get(String(application.tuitionId || ""));
-        const tutor =
-          tutorMap.get(String(tuition?.tutorId || "")) ||
-          tutorMap.get(String(application.tutorId || ""));
-
-        return serializeStudentApplication(application, tuition, tutor);
-      }),
-      stats: countApplicationStatuses(applications),
-    });
+    res.status(200).json(applications);
   } catch (error) {
-    console.error(error);
+    console.error("Failed to fetch applications:", error);
     res.status(500).json({ error: "Server error" });
   }
 }
 
 export async function cancelApplication(req, res) {
   try {
-    const student = await getUserFromRequest(req);
-    if (!student) return unauthorized(res);
+    const student = req.user;
 
     if (student.role !== "student") {
       return res

@@ -11,19 +11,25 @@ import {
   listAdminTestimonials,
   updateAdminTestimonialStatus,
 } from "../controllers/testimonialController.js";
+import {
+  requireRole,
+  verifyToken,
+} from "../middleware/verifytoken.js";
 
 const router = Router();
 
-router.get("/admin/testimonials", listAdminTestimonials);
-router.patch("/admin/testimonials/:id", updateAdminTestimonialStatus);
+const adminOnly = [verifyToken, requireRole("admin")];
 
-router.get("/admin/users", getAdminUsers);
-router.patch("/admin/users/:id/role", updateAdminUserRole);
+router.get("/admin/testimonials", ...adminOnly, listAdminTestimonials);
+router.patch("/admin/testimonials/:id", ...adminOnly, updateAdminTestimonialStatus);
 
-router.get("/admin/tuitions", getAdminTuitions);
-router.patch("/admin/tuitions/:id/approval", updateAdminTuitionApproval);
+router.get("/admin/users", ...adminOnly, getAdminUsers);
+router.patch("/admin/users/:id/role", ...adminOnly, updateAdminUserRole);
 
-router.get("/admin/stats", getAdminStats);
-router.get("/admin/transactions", getAdminTransactions);
+router.get("/admin/tuitions", ...adminOnly, getAdminTuitions);
+router.patch("/admin/tuitions/:id/approval", ...adminOnly, updateAdminTuitionApproval);
+
+router.get("/admin/stats", ...adminOnly, getAdminStats);
+router.get("/admin/transactions", ...adminOnly, getAdminTransactions);
 
 export default router;

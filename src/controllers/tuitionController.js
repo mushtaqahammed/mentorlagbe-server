@@ -1,6 +1,6 @@
 import { ObjectId } from "mongodb";
 import { tuitionsCollection, usersCollection } from "../config/database.js";
-import { getTutorFromRequest, unauthorized } from "../middleware/auth.js";
+
 import { asString, toObjectId } from "../utils/helpers.js";
 import {
   activeTuitionFilter,
@@ -11,8 +11,7 @@ import {
 
 export async function listTutorTuitions(req, res) {
   try {
-    const tutor = await getTutorFromRequest(req);
-    if (!tutor) return unauthorized(res);
+    const tutor = req.user;
 
     if (req.query.tutorId && String(req.query.tutorId) !== tutor.id) {
       return res.status(403).json({ error: "Forbidden" });
@@ -31,18 +30,17 @@ export async function listTutorTuitions(req, res) {
 }
 
 export async function countTuitions(req, res) {
-  const query = req.query || {};
-  if (req.query.tutorId) {
-    query.tutorId = req.query.tutorId;
-  }
-  const count = await tuitionsCollection.countDocuments(query);
+  // The owner comes from the verified token; a client-supplied tutorId query
+  // must never influence this count.
+  const count = await tuitionsCollection.countDocuments({
+    tutorId: req.user.id,
+  });
   res.send({ count });
 }
 
 export async function createTuition(req, res) {
   try {
-    const tutor = await getTutorFromRequest(req);
-    if (!tutor) return unauthorized(res);
+    const tutor = req.user;
 
     const now = new Date();
     const result = await tuitionsCollection.insertOne({
@@ -65,8 +63,7 @@ export async function createTuition(req, res) {
 
 export async function updateTuition(req, res) {
   try {
-    const tutor = await getTutorFromRequest(req);
-    if (!tutor) return unauthorized(res);
+    const tutor = req.user;
 
     const tuitionId = toObjectId(req.params.id);
     const current = await tuitionsCollection.findOne({
@@ -97,8 +94,7 @@ export async function updateTuition(req, res) {
 
 export async function updateTuitionStatus(req, res) {
   try {
-    const tutor = await getTutorFromRequest(req);
-    if (!tutor) return unauthorized(res);
+    const tutor = req.user;
 
     const status = req.body?.status;
     if (status !== "Active" && status !== "Closed") {
@@ -127,8 +123,7 @@ export async function updateTuitionStatus(req, res) {
 
 export async function deleteTuition(req, res) {
   try {
-    const tutor = await getTutorFromRequest(req);
-    if (!tutor) return unauthorized(res);
+    const tutor = req.user;
 
     const result = await tuitionsCollection.deleteOne({
       _id: toObjectId(req.params.id),
