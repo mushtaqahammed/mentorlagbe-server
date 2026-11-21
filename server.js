@@ -1,11 +1,13 @@
 import express from "express";
 import cors from "cors";
 import { PORT } from "./src/config/env.js";
-import "./src/config/database.js";
+import { bookmarksCollection } from "./src/config/database.js";
+import { ensureBookmarksIndex } from "./src/services/bookmarkService.js";
 import { ensurePaymentsCollection } from "./src/services/paymentService.js";
 import {
   adminRoutes,
   applicationRoutes,
+  bookmarkRoutes,
   paymentRoutes,
   statsRoutes,
   subscriptionRoutes,
@@ -26,6 +28,7 @@ app.get("/", (req, res) => {
 app.use(userRoutes);
 app.use(tuitionRoutes);
 app.use(applicationRoutes);
+app.use(bookmarkRoutes);
 app.use(testimonialRoutes);
 app.use(statsRoutes);
 app.use(adminRoutes);
@@ -33,6 +36,11 @@ app.use(paymentRoutes);
 app.use(subscriptionRoutes);
 
 await ensurePaymentsCollection();
+try {
+  await ensureBookmarksIndex(bookmarksCollection);
+} catch (error) {
+  console.error("Could not prepare the bookmarks collection:", error);
+}
 
 app.listen(PORT, () => {
   console.log(`Example app listening on port ${PORT}`);

@@ -21,6 +21,7 @@ export const usersCollection = database.collection("user");
 export const sessionsCollection = database.collection("session");
 export const tuitionsCollection = database.collection("tuition");
 export const applicationsCollection = database.collection("application");
+export const bookmarksCollection = database.collection("bookmarks");
 export const testimonialsCollection = database.collection("testimonial");
 export const paymentsCollection = database.collection("payments");
 export const subscriptionsCollection = database.collection("subscriptions");
