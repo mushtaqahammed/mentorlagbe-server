@@ -3,7 +3,7 @@ import {
   tuitionsCollection,
   usersCollection,
 } from "../config/database.js";
-import { countActiveStudents } from "../services/testimonialService.js";
+import { countActiveStudents } from "../services/statsService.js";
 import { activeTuitionFilter } from "../utils/tuition.js";
 
 export async function getPlatformStats(req, res) {

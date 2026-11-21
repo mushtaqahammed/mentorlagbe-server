@@ -6,7 +6,7 @@ This repository is the **Express/MongoDB backend** of MentorLagbe. The Next.js f
 
 ## 1. Backend Project Overview
 
-The backend exposes a REST API for tuition posts, applications, users, testimonials, platform/admin statistics, payments and subscription state. Authentication is not implemented here: it verifies Better Auth session tokens issued by the frontend by looking them up in the shared MongoDB `session` collection. A separate internal-secret channel (`x-internal-secret` plus identity headers) protects service-to-service endpoints used by the frontend's server code.
+The backend exposes a REST API for tuition posts, applications, users, bookmarks, platform/admin statistics, payments and subscription state. Authentication is not implemented here: it verifies Better Auth session tokens issued by the frontend by looking them up in the shared MongoDB `session` collection. A separate internal-secret channel (`x-internal-secret` plus identity headers) protects service-to-service endpoints used by the frontend's server code.
 
 ## 2. Server Technology Stack
 
@@ -43,11 +43,11 @@ mentorlagbe-server/
     routes/
       index.js                    # re-exports all routers
       userRoutes.js, tuitionRoutes.js, applicationRoutes.js
-      testimonialRoutes.js, statsRoutes.js, adminRoutes.js
+      statsRoutes.js, adminRoutes.js
       bookmarkRoutes.js, paymentRoutes.js, subscriptionRoutes.js
     controllers/
       userController.js, tuitionController.js, applicationController.js
-      testimonialController.js, statsController.js, adminController.js
+      statsController.js, adminController.js
       bookmarkController.js, paymentController.js, subscriptionController.js
     middleware/
       verifytoken.js              # single Bearer-session verification implementation
@@ -56,14 +56,13 @@ mentorlagbe-server/
     services/
       paymentService.js           # payment records, filters, revenue aggregation
       subscriptionService.js      # plan catalog and Pro grant/inactive state
-      testimonialService.js       # verified users, unique index, active student count
+      statsService.js            # active-student count for public platform stats
       userService.js              # findUserById
       bookmarkService.js         # bookmarks collection index, CRUD, plan lookup, joins
     utils/
       helpers.js                  # ObjectId/date/string/number/money helpers
       tuition.js                  # tuition serializers, filters, admin filters
       application.js              # application serializers and status counts
-      testimonial.js              # testimonial constants and serializers
 ```
 
 ## 5. Express Server Configuration
@@ -72,7 +71,7 @@ mentorlagbe-server/
 
 - `const app = express()`; `app.use(cors())` (permissive CORS - all origins); `app.use(express.json())`.
 - `GET /` returns the plain text `Hello World!` health/check response.
-- Mounts routers in this order: users, tuitions, applications, testimonials, stats, admin, payments, subscriptions.
+- Mounts routers in this order: users, tuitions, applications, bookmarks, stats, admin, payments, subscriptions.
 - Awaits `ensurePaymentsCollection()` before listening (creates the `payments` collection and a partial unique index on `stripeSessionId`).
 - `app.listen(PORT, ...)` logs `Example app listening on port ${PORT}`; exports `app` as default.
 
@@ -125,15 +124,6 @@ Bookmarks are rows in the dedicated `bookmarks` collection. All three routes use
 | GET | `/bookmarks` | Newest-first bookmarks joined to the original `tuition` document (title, subject, classLevel, mode, location, monthlyFee, daysPerWeek, description, bannerImage, tutorId, tutorName, tutorEmail, approvalStatus, status) plus `count`, `plan`, `limit`; unavailable/missing references keep `available: false` | Bearer + role `student` | - |
 | DELETE | `/bookmarks/:tuitionId` | Delete the caller's row; repeated deletes succeed harmlessly | Bearer + role `student` | - |
 
-### Testimonial endpoints
-
-| Method | Endpoint | Purpose | Auth | Request body |
-| --- | --- | --- | --- | --- |
-| GET | `/testimonials` | Approved testimonials, newest first, max 12 (`?limit`) | public | - |
-| POST | `/testimonials` | Submit feedback (one per user); stored as `pending` | Bearer + role `student`/`tutor` **and** internal + `x-user-id` | `{ "rating": 1..5, "message": "10-600 chars" }` |
-| GET | `/admin/testimonials` | Paginated moderation list (`?status`, `?limit`, `?skip`) | Bearer + role `admin` **and** internal + `x-admin-id` | - |
-| PATCH | `/admin/testimonials/:id` | Set status `approved`/`rejected` | same as above | `{ "status": "approved" | "rejected" }` |
-
 ### Admin endpoints
 
 | Method | Endpoint | Purpose | Auth | Request body |
@@ -159,13 +149,13 @@ Error responses: `401 { error: "Unauthorized" }`, `403 { error: "Forbidden" }`, 
 
 ## 7. Controllers, Services, Middleware, and Utilities
 
-**Controllers** (`src/controllers/`): request parsing, authorization-scoped queries and JSON responses. `tuitionController.js` (CRUD, public listings, serializer usage), `applicationController.js` (apply, review, stats, scoped lists), `adminController.js` (users, tuitions, stats, transactions), `testimonialController.js` (public list, submission, moderation), `paymentController.js` (record payment), `subscriptionController.js` (state lookup/apply), `statsController.js`, `userController.js`.
+**Controllers** (`src/controllers/`): request parsing, authorization-scoped queries and JSON responses. `tuitionController.js` (CRUD, public listings, serializer usage), `applicationController.js` (apply, review, stats, scoped lists), `adminController.js` (users, tuitions, stats, transactions), `paymentController.js` (record payment), `subscriptionController.js` (state lookup/apply), `statsController.js`, `userController.js`.
 
-**Services** (`src/services/`): `paymentService.js` (collection setup, idempotent upsert, verification filters, search/plan/role conditions, transaction serialization and revenue aggregations; also reads a legacy `payment` collection for stats), `subscriptionService.js` (`PRO_PLANS`: `pro-tutor` $15, `pro-student` $10; `applySubscriptionState` with `grant`/`inactive` modes writing both `subscriptions` and `user`), `testimonialService.js` (verified-user set, unique `userId` index, active-student count from live sessions), `userService.js` (`findUserById`).
+**Services** (`src/services/`): `paymentService.js` (collection setup, idempotent upsert, verification filters, search/plan/role conditions, transaction serialization and revenue aggregations; also reads a legacy `payment` collection for stats), `subscriptionService.js` (`PRO_PLANS`: `pro-tutor` $15, `pro-student` $10; `applySubscriptionState` with `grant`/`inactive` modes writing both `subscriptions` and `user`), `statsService.js` (active-student count from live sessions), `userService.js` (`findUserById`).
 
 **Middleware**: `verifytoken.js` is the single Bearer verification implementation (`getUserFromRequest`, `verifyToken`, `requireRole`, `unauthorized`); `auth.js` re-exports it for older controllers and adds `getTutorFromRequest`; `internalAuth.js` provides `hasInternalSecret`, `requireInternalService`, `requireInternalIdentity`.
 
-**Utilities**: `helpers.js` (`toObjectId`, `cleanText`, `parseInteger`, `asString`, `escapeRegExp`, date conversion, `combine`, `formatMoney`), `tuition.js` (`activeTuitionFilter` = `approvalStatus: /^approved$/i` with active-or-missing `status`; `editableFields`; serializers and admin filters), `application.js` (status normalization/counts, applicant/student serializers), `testimonial.js` (limits 10-600 chars, public cap 12, status normalization/serialization).
+**Utilities**: `helpers.js` (`toObjectId`, `cleanText`, `parseInteger`, `asString`, `escapeRegExp`, date conversion, `combine`, `formatMoney`), `tuition.js` (`activeTuitionFilter` = `approvalStatus: /^approved$/i` with active-or-missing `status`; `editableFields`; serializers and admin filters), `application.js` (status normalization/counts, applicant/student serializers).
 
 ## 8. MongoDB Connection and Database Structure
 
@@ -177,11 +167,10 @@ Collections exported and used:
 - `session` - Better Auth sessions (read for token verification and active-student stats)
 - `tuition` - tuition posts
 - `application` - student applications
-- `testimonial` - feedback with moderation status
 - `payments` - Stripe subscription payment records
 - `subscriptions` - stored Pro subscription state
 
-Indexes: `payments.stripeSessionId` partial unique index created at startup (`ensurePaymentsCollection`); `bookmarks.{studentId, tuitionId}` compound unique index created at startup (`ensureBookmarksIndex`); `testimonial.userId` unique index created lazily on first submission (`ensureTestimonialUserIndex`).
+Indexes: `payments.stripeSessionId` partial unique index created at startup (`ensurePaymentsCollection`); `bookmarks.{studentId, tuitionId}` compound unique index created at startup (`ensureBookmarksIndex`).
 
 ## 9. Business Collections (Verified Against Code)
 
@@ -194,7 +183,7 @@ The task description mentions plural `users`, `tuitions`, `applications`, `payme
 | applications | `application` (singular) | Created by `applyToTuition` |
 | payments | `payments` (plural) | Created at startup; a legacy `payment` collection is tolerated for stats only |
 
-Also present: `session`, `testimonial`, `subscriptions`, and the dedicated `bookmarks` collection.
+Also present: `session`, `subscriptions`, and the dedicated `bookmarks` collection.
 
 ## 10. Database Relationships and Important Fields
 
@@ -203,7 +192,6 @@ Also present: `session`, `testimonial`, `subscriptions`, and the dedicated `book
 - `tuition`: `_id`, `tutorId` (string user id), `tutorName`, `tutorEmail`, `title`, `subject`, `classLevel`, `mode`, `location`, `monthlyFee`, `daysPerWeek`, `description`, `bannerImage`, `approvalStatus` (`Pending`/`Approved`/`Rejected`), `status` (`Active`/`Closed`), `createdAt`, `updatedAt`.
 - `application`: `_id`, `tuitionId` (string), `studentId`, `studentName`, `studentEmail`, `phone`, `preferredSchedule`, `note`, `tutorId`, `status` (`pending`/`accepted`/`rejected`, legacy capitalized values normalized), `reviewedBy`, `createdAt`, `updatedAt`. Unique per `(tuitionId, studentId)` (enforced in the apply handler, not a DB index).
 - `bookmarks`: `_id`, `studentId` (string, from verified session), `studentEmail` (from verified user), `tuitionId` (string), `createdAt`. Compound unique index on `(studentId, tuitionId)` prevents duplicates.
-- `testimonial`: `_id`, `userId`, `name`, `role`, `rating`, `message`, `image`, `status` (`pending`/`approved`/`rejected`), `createdAt`, `updatedAt`.
 - `payments`: `_id`, `userId`, `userEmail`, `userRole`, `planId`, `planName`, `amount`, `amountMinor`, `amountInMinorUnits`, `currency`, `status`/`paymentStatus`, `provider: "stripe"`, `mode`, `type`, `stripeSessionId`, `stripeSubscriptionId`, `stripeCustomerId`, `currentPeriodStart`, `currentPeriodEnd`, `paidAt`, `createdAt`.
 - `subscriptions`: `userId`, `planId`, `isPro`, `status`, `stripeSessionId`, `stripeSubscriptionId`, `stripeCustomerId`, `currentPeriodStart`, `currentPeriodEnd`, `createdAt`, `activatedAt`, `updatedAt`.
 
@@ -213,14 +201,14 @@ Ownership checks always use the verified user id (`req.user.id` / `x-user-id`), 
 
 `getUserFromRequest(req)` reads `Authorization: Bearer <token>`, finds the document in `sessionsCollection` by `token`, rejects missing/expired sessions, loads the user by `_id`, and returns `{id, name, email, phone, role (lowercased), plan (default "free")}`. `verifyToken` sets `req.user` or sends 401; `requireRole(...roles)` checks the lowercased role and sends 403 on mismatch. Controllers scope queries by `req.user.id`.
 
-Separately, `internalAuth.js` protects service endpoints: `requireInternalService` checks `x-internal-secret`; `requireInternalIdentity(req, res, headerName, allowedRoles)` additionally reads `x-user-id` or `x-admin-id`, loads the user from `user` and optionally checks roles (403 otherwise). Testimonial and admin controllers use this identity path **in addition** to the Bearer/role middleware declared on their routes.
+Separately, `internalAuth.js` protects service endpoints: `requireInternalService` checks `x-internal-secret`; `requireInternalIdentity(req, res, headerName, allowedRoles)` additionally reads `x-user-id` or `x-admin-id`, loads the user from `user` and optionally checks roles (403 otherwise). Admin controllers use this identity path **in addition** to the Bearer/role middleware declared on their routes.
 
 ## 12. Role-Based Access Control
 
-- **Student**: apply to tuitions, list/cancel own applications, view own stats, save up to 5 tuitions (unlimited on Pro) via bookmark endpoints, submit one testimonial.
-- **Tutor**: create/edit/status/delete own tuitions, view own count/stats, review applicants on own tuitions, submit one testimonial.
-- **Admin**: list users, change roles (not own), list/approve/reject tuitions, view platform stats, transactions and testimonial moderation lists.
-- Public (no auth): tuition listings/detail/featured, testimonials list, platform stats, root health route.
+- **Student**: apply to tuitions, list/cancel own applications, view own stats, save up to 5 tuitions (unlimited on Pro) via bookmark endpoints.
+- **Tutor**: create/edit/status/delete own tuitions, view own count/stats, review applicants on own tuitions.
+- **Admin**: list users, change roles (not own), list/approve/reject tuitions, view platform stats and transactions.
+- Public (no auth): tuition listings/detail/featured, platform stats, root health route.
 - Internal (shared secret): user lookup, payment recording, subscription state/apply/lookup by Stripe session.
 
 Role names in the database are capitalized; route guards and `getUserFromRequest` compare lowercase forms. The sign-up role is sanitized by the frontend's Better Auth hook, so this server assumes the stored role is already valid.
@@ -299,21 +287,20 @@ The repository has a Vercel project link (`.vercel/project.json`), no `vercel.js
 
 ## 22. Current Backend Implementation Status and Known Issues
 
-**Implemented**: Express app with 8 routers; Bearer session verification and role guards; internal-secret identity guards; tuition CRUD + public listings + featured posts; application apply/review/cancel/stats; bookmark add/list/remove with free-plan cap; admin users/tuitions/stats/transactions; testimonial submission and moderation; platform stats; payment record and subscription grant/inactive state; startup collection/index setup; aggregation-based revenue and transaction reporting.
+**Implemented**: Express app with 7 routers; Bearer session verification and role guards; internal-secret identity guards; tuition CRUD + public listings + featured posts; application apply/review/cancel/stats; bookmark add/list/remove with free-plan cap; admin users/tuitions/stats/transactions; platform stats; payment record and subscription grant/inactive state; startup collection/index setup; aggregation-based revenue and transaction reporting.
 
 **Known gaps / issues**:
 
 1. `DB_USER`/`DB_PASSWORD` are combined with **hard-coded Atlas hosts** in `src/config/database.js`; no `MONGODB_URI` variable is supported.
 2. No `npm run dev`; no tests; no `middleware` for validation, logging or rate limiting. CORS accepts any origin.
 3. `GET /users` returns raw user documents to admins (no projection/serialization, unlike admin endpoints).
-4. Admin and testimonial routes apply **both** Bearer/role middleware and internal-secret/identity-header checks; callers must send both sets of headers.
+4. Admin routes apply **both** Bearer/role middleware and internal-secret/identity-header checks; callers must send both sets of headers.
 5. Bookmark duplicates are prevented by the compound unique index; the free-limit pre-check is followed by an insert and a post-insert reconciliation, so a racing request that would exceed 5 rows is rejected and its row removed.
 6. No image upload endpoint or Stripe SDK in this repository (sections 15-16).
 7. `createTuition` accepts arbitrary body fields (identity/approval/status are overwritten, but unrecognized fields are still stored).
-8. Testimonial "one per user" relies on a lazily created unique index; index creation failures are logged and ignored, so first-time duplicate races are possible.
-9. The `payments` collection is created at startup but there is no `payment` migration; `getPaymentsCollectionForStats()` only tolerates a legacy `payment` collection when computing stats.
-10. Role guards compare lowercase values while the database stores capitalized roles; a manually inserted unexpected role will be denied rather than normalized.
-11. Internal identity headers (`x-user-id`, `x-admin-id`) are trusted only after the internal secret check; if `INTERNAL_API_SECRET` is left at its empty default, `hasInternalSecret` always returns false and all internal endpoints are disabled.
-12. `getUserFromRequest` uses `session.expiresAt` from the shared Better Auth collection; session cleanup is the frontend's responsibility.
+8. The `payments` collection is created at startup but there is no `payment` migration; `getPaymentsCollectionForStats()` only tolerates a legacy `payment` collection when computing stats.
+9. Role guards compare lowercase values while the database stores capitalized roles; a manually inserted unexpected role will be denied rather than normalized.
+10. Internal identity headers (`x-user-id`, `x-admin-id`) are trusted only after the internal secret check; if `INTERNAL_API_SECRET` is left at its empty default, `hasInternalSecret` always returns false and all internal endpoints are disabled.
+11. `getUserFromRequest` uses `session.expiresAt` from the shared Better Auth collection; session cleanup is the frontend's responsibility.
 
 This README was written from the source in this repository. Keep it separate from the client README and update both when the shared API contract changes.

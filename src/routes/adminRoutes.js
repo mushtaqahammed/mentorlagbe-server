@@ -8,10 +8,6 @@ import {
   updateAdminUserRole,
 } from "../controllers/adminController.js";
 import {
-  listAdminTestimonials,
-  updateAdminTestimonialStatus,
-} from "../controllers/testimonialController.js";
-import {
   requireRole,
   verifyToken,
 } from "../middleware/verifytoken.js";
@@ -19,9 +15,6 @@ import {
 const router = Router();
 
 const adminOnly = [verifyToken, requireRole("admin")];
-
-router.get("/admin/testimonials", ...adminOnly, listAdminTestimonials);
-router.patch("/admin/testimonials/:id", ...adminOnly, updateAdminTestimonialStatus);
 
 router.get("/admin/users", ...adminOnly, getAdminUsers);
 router.patch("/admin/users/:id/role", ...adminOnly, updateAdminUserRole);

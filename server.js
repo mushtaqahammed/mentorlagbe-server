@@ -11,7 +11,6 @@ import {
   paymentRoutes,
   statsRoutes,
   subscriptionRoutes,
-  testimonialRoutes,
   tuitionRoutes,
   userRoutes,
 } from "./src/routes/index.js";
@@ -29,7 +28,6 @@ app.use(userRoutes);
 app.use(tuitionRoutes);
 app.use(applicationRoutes);
 app.use(bookmarkRoutes);
-app.use(testimonialRoutes);
 app.use(statsRoutes);
 app.use(adminRoutes);
 app.use(paymentRoutes);
