@@ -1,6 +1,6 @@
 import { INTERNAL_API_SECRET } from "../config/env.js";
 import { findUserById } from "../services/userService.js";
-import { unauthorized } from "./auth.js";
+import { unauthorized } from "./verifytoken.js";
 
 export function hasInternalSecret(req) {
   return (

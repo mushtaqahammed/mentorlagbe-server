@@ -30,14 +30,6 @@ export function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function toIsoString(value, fallback = new Date()) {
-  if (value instanceof Date) return value.toISOString();
-  const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime())
-    ? parsed.toISOString()
-    : fallback.toISOString();
-}
-
 export function toIsoStringOrNull(value) {
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value.toISOString();
